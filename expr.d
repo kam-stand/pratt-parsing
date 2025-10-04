@@ -1,3 +1,8 @@
+/*
+ * Pratt parser for simple arithmetic expressions
+ * Based on: https://eli.thegreenplace.net/2010/01/02/top-down-operator-precedence-parsing
+ */
+
 module expr;
 import token;
 import lexer;
@@ -33,19 +38,17 @@ struct Expression
 
 Expression* makeLiteral(Token value)
 {
-    Literal* lit = new Literal(value);
-    Expression* expr = new Expression();
+    auto lit = new Literal(value);
+    auto expr = new Expression();
     expr.type = ExprType.Literal;
     expr.lit = lit;
     return expr;
-
 }
 
 Expression* makeBinary(Expression* lhs, Token op, Expression* rhs)
 {
-
-    Binary* bin = new Binary(lhs, op, rhs);
-    Expression* expr = new Expression();
+    auto bin = new Binary(lhs, op, rhs);
+    auto expr = new Expression();
     expr.type = ExprType.Binary;
     expr.bin = bin;
     return expr;
@@ -53,22 +56,112 @@ Expression* makeBinary(Expression* lhs, Token op, Expression* rhs)
 
 void display(Expression* expr)
 {
-
     switch (expr.type)
     {
     case ExprType.Literal:
-        writefln("\tLITERAL: [TYPE: %s] | [VAL: %c]", expr.lit.value.type, expr.lit.value.ch);
+        writefln("LITERAL: [TYPE: %s] | [VAL: %c]", expr.lit.value.type, expr.lit.value.ch);
         break;
     case ExprType.Binary:
         writeln("BINARY: ");
         display(expr.bin.lhs);
-        writefln("\tOPERATION: [TYPE: %s] | [VAL: %c]", expr.bin.op.type, expr.bin.op.ch);
+        writefln("  OPERATION: [TYPE: %s] | [VAL: %c]", expr.bin.op.type, expr.bin.op.ch);
         display(expr.bin.rhs);
         break;
     default:
         break;
     }
 }
+
+Expression* parse(byte[] input)
+{
+    auto lex = initLexer(input);
+    return parse_bp(lex, 0);
+}
+
+// ---------------- Pratt core ----------------
+
+Expression* parse_bp(ref Lexer lex, int min_bp)
+{
+    // prefix or literal
+    auto t = lex.next();
+    auto left = parseNud(lex, t);
+
+    while (true)
+    {
+        auto op = lex.peek();
+        if (op.type == TokenType.Eof)
+            break;
+
+        int lbp, rbp;
+        if (!infixBindingPower(op, lbp, rbp))
+            break;
+
+        if (lbp < min_bp)
+            break;
+
+        lex.next(); // consume operator
+        auto right = parse_bp(lex, rbp);
+        left = makeBinary(left, op, right);
+    }
+
+    return left;
+}
+
+// ---------------- nud / led ----------------
+
+Expression* parseNud(ref Lexer lex, Token t)
+{
+    switch (t.type)
+    {
+    case TokenType.Atom:
+        // Just a literal value like '1' or 'x'
+        return makeLiteral(t);
+
+    case TokenType.Op:
+        // Handle prefix/unary operators like -x or +x
+        if (t.ch == '-' || t.ch == '+')
+        {
+            // Assign a high binding power for unary so it binds tightly
+            int rbp = 5;
+            auto rhs = parse_bp(lex, rbp);
+
+            // Represent -x as (0 - x) for simplicity
+            auto zero = makeLiteral(Token(TokenType.Atom, '0'));
+            return makeBinary(zero, t, rhs);
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    throw new Exception("Unexpected token in nud: " ~ t.ch);
+}
+
+// No led() needed since handled inline in parse_bp
+
+// ---------------- Binding powers ----------------
+
+bool infixBindingPower(Token op, out int lbp, out int rbp)
+{
+    switch (op.ch)
+    {
+    case '+':
+    case '-':
+        lbp = 1;
+        rbp = 2;
+        return true;
+    case '*':
+    case '/':
+        lbp = 3;
+        rbp = 4;
+        return true;
+    default:
+        return false;
+    }
+}
+
+// ---------------- Tests ----------------
 
 unittest
 {
@@ -87,5 +180,4 @@ unittest
     assert(bin.bin.lhs.lit.value.ch == '1');
 
     display(bin);
-
 }
